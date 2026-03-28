@@ -33,9 +33,6 @@ This version features three distinct modes, each designed to replicate the origi
 
 ## 🚀 Getting Started
 
-### Prerequisites
-* [Insert your tech stack here, e.g., Node.js / Python / Web Browser]
-
 ### Installation
 ```bash
 # Clone the repository

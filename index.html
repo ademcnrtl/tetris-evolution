@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>TETRIS HISTORY</title>
+<style>
+  :root {
+    --bg-color: #24241b; 
+    --text-color: #e0e0d0;
+    --scanline-opacity: 0.15;
+    --vignette-opacity: 0.6;
+  }
+
+  * { 
+    margin: 0; padding: 0; box-sizing: border-box; 
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  ::selection { background: transparent; }
+  ::-moz-selection { background: transparent; }
+
+  body {
+    background-color: var(--bg-color);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    color: var(--text-color);
+    overflow: hidden;
+    position: relative;
+    cursor: none;
+    transition: background-color 0.5s ease, color 0.5s ease;
+  }
+
+  #crt-scanlines {
+    position: fixed; inset: 0; pointer-events: none; z-index: 1000;
+    background: repeating-linear-gradient(to bottom, transparent 0px, transparent 2px, rgba(0,0,0,var(--scanline-opacity)) 2px, rgba(0,0,0,var(--scanline-opacity)) 4px);
+  }
+  #crt-vignette {
+    position: fixed; inset: 0; pointer-events: none; z-index: 999;
+    background: radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,var(--vignette-opacity)) 100%);
+  }
+
+  .theme-selector {
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    z-index: 2000;
+    cursor: default;
+  }
+
+  .theme-selector select {
+    background: transparent;
+    color: inherit;
+    border: 1px solid var(--text-color);
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 14px;
+    padding: 4px 8px;
+    outline: none;
+    appearance: none;
+    cursor: pointer;
+    font-weight: bold;
+    opacity: 0.7;
+  }
+  .theme-selector select:hover { opacity: 1; }
+  .theme-selector select option { background: #000; color: #fff; }
+
+  #game-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    transform-origin: center center;
+  }
+
+  #screen {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 20px;
+    font-weight: bold;
+    line-height: 1.1;
+    white-space: pre;
+    text-align: left;
+    text-shadow: 0 0 4px rgba(255, 255, 255, 0.3);
+    z-index: 10;
+  }
+
+  .controls-info {
+    margin-top: 15px;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 12px;
+    color: inherit;
+    opacity: 0.6;
+    text-align: center;
+    line-height: 1.5;
+    z-index: 10;
+  }
+
+  body[data-theme="gameboy"] #screen { text-shadow: none; font-family: monospace; }
+  body[data-theme="dos"] #screen { text-shadow: none; }
+</style>
+</head>
+<body data-theme="elektronika">
+
+<div id="crt-scanlines"></div>
+<div id="crt-vignette"></div>
+
+<div class="theme-selector">
+  <select id="themeSelect">
+    <option value="elektronika">1984 - Elektronika 60 (Sessiz)</option>
+    <option value="dos">1986 - MS-DOS (PC Hoparlörü)</option>
+    <option value="gameboy">1989 - Game Boy (8-bit Ses)</option>
+  </select>
+</div>
+
+<div id="game-container">
+  <pre id="screen"></pre>
+  <div class="controls-info" id="controls"></div>
+</div>
+
+<script>
+document.addEventListener('contextmenu', e => e.preventDefault());
+document.addEventListener('keydown', e => {
+  if (e.keyCode === 123 || 
+     (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'i' || e.key === 'J' || e.key === 'j')) || 
+     (e.ctrlKey && (e.key === 'U' || e.key === 'u'))) { 
+    e.preventDefault();
+  }
+});
+
+let audioCtx = null;
+let nextNoteTime = 0, noteIndex = 0;
+const notes = { 'E5': 659.25, 'D5': 587.33, 'C5': 523.25, 'B4': 493.88, 'A4': 440.00, 'G#4': 415.30 };
+const melody = [
+  ['E5', 2], ['B4', 1], ['C5', 1], ['D5', 2], ['C5', 1], ['B4', 1], ['A4', 2], ['A4', 1], ['C5', 1], ['E5', 2], ['D5', 1], ['C5', 1],
+  ['B4', 3], ['C5', 1], ['D5', 2], ['E5', 2], ['C5', 2], ['A4', 2], ['A4', 2], [null, 2]
+];
+
+function initAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+}
+
+function playSound(type) {
+  if (!audioCtx || currentTheme.name === 'elektronika') return;
+
+  const osc = audioCtx.createOscillator();
+  const gainNode = audioCtx.createGain();
+
+  osc.type = 'square'; 
+
+  osc.connect(gainNode);
+  gainNode.connect(audioCtx.destination);
+
+  const now = audioCtx.currentTime;
+  let vol = currentTheme.name === 'dos' ? 0.05 : 0.08; 
+
+  if (type === 'move') {
+    osc.frequency.setValueAtTime(300, now);
+    gainNode.gain.setValueAtTime(vol, now);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.05);
+    osc.start(now); osc.stop(now + 0.05);
+  } else if (type === 'rotate') {
+    osc.frequency.setValueAtTime(450, now);
+    gainNode.gain.setValueAtTime(vol, now);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.05);
+    osc.start(now); osc.stop(now + 0.05);
+  } else if (type === 'drop') {
+    osc.frequency.setValueAtTime(150, now);
+    osc.frequency.exponentialRampToValueAtTime(50, now + 0.1);
+    gainNode.gain.setValueAtTime(vol, now);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+    osc.start(now); osc.stop(now + 0.1);
+  } else if (type === 'clear') {
+    osc.frequency.setValueAtTime(600, now);
+    osc.frequency.setValueAtTime(800, now + 0.1);
+    gainNode.gain.setValueAtTime(vol, now);
+    gainNode.gain.linearRampToValueAtTime(0, now + 0.2);
+    osc.start(now); osc.stop(now + 0.2);
+  } else if (type === 'gameover') {
+    osc.frequency.setValueAtTime(300, now);
+    osc.frequency.linearRampToValueAtTime(100, now + 0.5);
+    gainNode.gain.setValueAtTime(vol, now);
+    gainNode.gain.linearRampToValueAtTime(0, now + 0.5);
+    osc.start(now); osc.stop(now + 0.5);
+  }
+}
+
+function processMusic() {
+  if (!audioCtx || currentTheme.name !== 'gameboy' || gameState !== 'playing') return;
+  const tempo = 0.18;
+  while (nextNoteTime < audioCtx.currentTime + 0.1) {
+    let [note, duration] = melody[noteIndex];
+    if (note) {
+      let osc = audioCtx.createOscillator(); let gain = audioCtx.createGain();
+      osc.type = 'square'; osc.frequency.value = notes[note];
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      gain.gain.setValueAtTime(0.04, nextNoteTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, nextNoteTime + (duration * tempo) - 0.02);
+      osc.start(nextNoteTime); osc.stop(nextNoteTime + (duration * tempo));
+    }
+    nextNoteTime += duration * tempo;
+    noteIndex = (noteIndex + 1) % melody.length;
+  }
+}
+
+const themes = {
+  elektronika: { name: 'elektronika', bg: '#24241b', text: '#e0e0d0', empty: ' .', filled: '[]', wallL: '<!', wallR: '!>', scanline: 0.15, vignette: 0.6 },
+  dos:         { name: 'dos', bg: '#000000', text: '#00AAAA', empty: ' .', filled: '##', wallL: '<!', wallR: '!>', scanline: 0, vignette: 0 },
+  gameboy:     { name: 'gameboy', bg: '#8bac0f', text: '#0f380f', empty: '  ', filled: '██', wallL: '||', wallR: '||', scanline: 0, vignette: 0.2 }
+};
+
+let currentTheme = themes.elektronika;
+
+document.getElementById('themeSelect').addEventListener('change', (e) => {
+  const t = e.target.value;
+  document.body.setAttribute('data-theme', t);
+  currentTheme = themes[t];
+  document.documentElement.style.setProperty('--bg-color', currentTheme.bg);
+  document.documentElement.style.setProperty('--text-color', currentTheme.text);
+  document.documentElement.style.setProperty('--scanline-opacity', currentTheme.scanline);
+  document.documentElement.style.setProperty('--vignette-opacity', currentTheme.vignette);
+  
+  if (audioCtx) nextNoteTime = audioCtx.currentTime + 0.1;
+  
+  renderScreen();
+});
+
+const userLang = navigator.language || navigator.userLanguage;
+const isTurkish = userLang.toLowerCase().startsWith('tr');
+
+const dict = {
+  tr: {
+    title: "TETRIS",
+    pressEnter: "ENTER/DOKUN",
+    fullLines: "SATIR:",
+    level: "SEVIYE:",
+    score: "SKOR:",
+    time: "SURE:",
+    bestLines: "EN IYI:",
+    gameOver: "OYUN BITTI",
+    controls: isMobile() ? "DOKUN: Cevir | KAYDIR: Hareket/Dusus" : "YON TUSLARI: Hareket/Cevir | BOSLUK: Dusus"
+  },
+  en: {
+    title: "TETRIS",
+    pressEnter: "ENTER/TAP",
+    fullLines: "LINES:",
+    level: "LEVEL:",
+    score: "SCORE:",
+    time: "TIME:",
+    bestLines: "BEST:",
+    gameOver: "GAME OVER",
+    controls: isMobile() ? "TAP: Rotate | SWIPE: Move/Drop" : "ARROWS: Move/Rotate | SPACE: Drop"
+  }
+};
+const text = isTurkish ? dict.tr : dict.en;
+
+document.getElementById('controls').innerHTML = text.controls;
+
+function isMobile() { return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent); }
+
+const COLS = 10, ROWS = 20;
+const PIECES = [
+  [[1,1,1,1]], [[1,1],[1,1]], [[0,1,0],[1,1,1]], [[0,1,1],[1,1,0]],
+  [[1,1,0],[0,1,1]], [[1,0,0],[1,1,1]], [[0,0,1],[1,1,1]]
+];
+
+let board, current, next, score = 0, lines = 0, level = 1, bestLines = 0;
+let gameState = 'idle', paused = false, dropTimer = 0, dropInterval = 800, lastTime = 0, gameTimeMs = 0;
+
+const screenElement = document.getElementById('screen');
+const containerElement = document.getElementById('game-container');
+
+function init() {
+  initAudio(); 
+  board = Array.from({length: ROWS}, () => Array(COLS).fill(0));
+  score = 0; lines = 0; level = 1; gameTimeMs = 0;
+  paused = false; gameState = 'playing';
+  dropInterval = Math.max(100, 800 - (level - 1) * 80);
+  current = spawnPiece(); next = spawnPiece();
+  
+  if (audioCtx) nextNoteTime = audioCtx.currentTime + 0.1;
+  noteIndex = 0;
+}
+
+function spawnPiece() {
+  const shape = PIECES[Math.floor(Math.random() * PIECES.length)].map(r => [...r]);
+  return { shape, x: Math.floor((COLS - shape[0].length) / 2), y: 0 };
+}
+
+function rotate(shape) {
+  const rows = shape.length, cols = shape[0].length;
+  const res = Array.from({length: cols}, () => Array(rows).fill(0));
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) res[c][rows - 1 - r] = shape[r][c];
+  return res;
+}
+
+function valid(shape, ox, oy) {
+  for (let r = 0; r < shape.length; r++)
+    for (let c = 0; c < shape[r].length; c++)
+      if (shape[r][c]) {
+        if (ox + c < 0 || ox + c >= COLS || oy + r >= ROWS) return false;
+        if (oy + r >= 0 && board[oy + r][ox + c]) return false;
+      }
+  return true;
+}
+
+function place() {
+  for (let r = 0; r < current.shape.length; r++)
+    for (let c = 0; c < current.shape[r].length; c++)
+      if (current.shape[r][c] && current.y + r >= 0)
+        board[current.y + r][current.x + c] = 1;
+  
+  clearLines(); 
+  current = next; 
+  next = spawnPiece();
+  
+  if (!valid(current.shape, current.x, current.y)) {
+    gameState = 'gameover';
+    playSound('gameover');
+    if (lines > bestLines) bestLines = lines;
+  } else {
+    playSound('drop');
+  }
+}
+
+function clearLines() {
+  let cleared = 0;
+  for (let r = ROWS - 1; r >= 0; r--) {
+    if (board[r].every(c => c)) {
+      board.splice(r, 1); board.unshift(Array(COLS).fill(0));
+      cleared++; r++;
+    }
+  }
+  if (cleared > 0) {
+    playSound('clear');
+    score += [0, 40, 100, 300, 1200][cleared] * level;
+    lines += cleared; level = Math.floor(lines / 10) + 1;
+    dropInterval = Math.max(100, 800 - (level - 1) * 80);
+  }
+}
+
+function formatTime(ms) {
+  const s = Math.floor(ms / 1000);
+  return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
+}
+
+function renderScreen() {
+  let output = "\n\n"; 
+  const PANEL_W = 22; 
+  const th = currentTheme;
+
+  for (let r = 0; r < 23; r++) {
+    let leftPanel = "".padEnd(PANEL_W, " ");
+    
+    if (gameState === 'idle') {
+      if (r === 9) leftPanel = `  ${text.title} `.padEnd(PANEL_W, " ");
+      if (r === 11) leftPanel = `  ${text.pressEnter}`.padEnd(PANEL_W, " ");
+    } else {
+      if (r === 2) leftPanel = ` ${text.fullLines} ${lines}`.padEnd(PANEL_W, " ");
+      if (r === 3) leftPanel = ` ${text.level} ${level}`.padEnd(PANEL_W, " ");
+      if (r === 4) leftPanel = ` ${text.score} ${score}`.padEnd(PANEL_W, " ");
+      if (r === 5) leftPanel = ` ${text.time} ${formatTime(gameTimeMs)}`.padEnd(PANEL_W, " ");
+      
+      if (r >= 11 && r < 15 && next) {
+        let nr = r - 11, nStr = "";
+        if (nr < next.shape.length) {
+          for (let c = 0; c < next.shape[nr].length; c++) 
+            nStr += next.shape[nr][c] ? th.filled : "  ";
+        }
+        leftPanel = ("        " + nStr).padEnd(PANEL_W, " ");
+      }
+    }
+
+    let boardPanel = "";
+    if (r < ROWS) {
+      boardPanel += th.wallL; 
+      for (let c = 0; c < COLS; c++) {
+        let isFilled = board ? board[r][c] : 0;
+        if (gameState === 'playing' && current && r >= current.y && r < current.y + current.shape.length && c >= current.x && c < current.x + current.shape[0].length) {
+          if (current.shape[r - current.y][c - current.x]) isFilled = 1;
+        }
+        boardPanel += isFilled ? th.filled : th.empty;
+      }
+      boardPanel += th.wallR; 
+    } 
+    else if (r === ROWS) { boardPanel += th.wallL + "*".repeat(COLS*2) + th.wallR; } 
+    else if (r === ROWS + 1) { boardPanel += "  \\/\\/\\/\\/\\/\\/\\/\\/\\/\\/  "; } 
+    else { boardPanel += "".padEnd(24, " "); }
+
+    if (gameState === 'gameover' && r === 10) {
+      let goText = text.gameOver;
+      let padL = Math.floor((20 - goText.length) / 2);
+      boardPanel = th.wallL + " ".repeat(padL) + goText + " ".repeat(20 - goText.length - padL) + th.wallR;
+    }
+
+    let rightPanel = "".padEnd(PANEL_W, " ");
+    if (r === 2) rightPanel = ("  " + text.bestLines + " " + (bestLines > 0 ? bestLines : "")).padEnd(PANEL_W, " ");
+
+    output += leftPanel + boardPanel + rightPanel + "\n";
+  }
+  screenElement.textContent = output;
+}
+
+function resize() {
+  const baseWidth = 850; 
+  const scale = Math.min(1, window.innerWidth / baseWidth);
+  containerElement.style.transform = `scale(${scale})`;
+}
+window.addEventListener('resize', resize);
+resize();
+
+function loop(timestamp) {
+  const dt = timestamp - lastTime;
+  lastTime = timestamp;
+
+  if (gameState === 'playing' && !paused) {
+    gameTimeMs += dt; dropTimer += dt;
+    if (dropTimer >= dropInterval) {
+      dropTimer = 0;
+      if (valid(current.shape, current.x, current.y + 1)) {
+        current.y++;
+      } else {
+        place();
+      }
+    }
+  }
+  
+  processMusic();
+  
+  renderScreen(); requestAnimationFrame(loop);
+}
+
+document.addEventListener('keydown', e => {
+  if (gameState === 'idle' || gameState === 'gameover') { if (e.key === 'Enter') init(); return; }
+  if (e.key === 'p' || e.key === 'P') { paused = !paused; return; }
+  if (paused) return;
+
+  switch(e.key) {
+    case 'ArrowLeft': 
+      if (valid(current.shape, current.x - 1, current.y)) { current.x--; playSound('move'); } 
+      break;
+    case 'ArrowRight': 
+      if (valid(current.shape, current.x + 1, current.y)) { current.x++; playSound('move'); } 
+      break;
+    case 'ArrowDown': 
+      if (valid(current.shape, current.x, current.y + 1)) { current.y++; score++; playSound('move'); } 
+      else place(); 
+      break;
+    case 'ArrowUp':
+      const rot = rotate(current.shape);
+      if (valid(rot, current.x, current.y)) { current.shape = rot; playSound('rotate'); }
+      else if (valid(rot, current.x - 1, current.y)) { current.shape = rot; current.x--; playSound('rotate'); }
+      else if (valid(rot, current.x + 1, current.y)) { current.shape = rot; current.x++; playSound('rotate'); }
+      break;
+    case ' ':
+      e.preventDefault();
+      while (valid(current.shape, current.x, current.y + 1)) { current.y++; score += 2; }
+      place(); break;
+  }
+  if (['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp', ' '].includes(e.key)) renderScreen(); 
+});
+
+let touchStartX = 0, touchStartY = 0;
+document.addEventListener('touchstart', e => {
+  if (e.target.tagName === 'SELECT') return; 
+  touchStartX = e.changedTouches[0].screenX;
+  touchStartY = e.changedTouches[0].screenY;
+  
+  if (gameState === 'idle' || gameState === 'gameover') { init(); }
+}, {passive: false});
+
+document.addEventListener('touchend', e => {
+  if (e.target.tagName === 'SELECT' || gameState !== 'playing' || paused) return;
+  const dx = e.changedTouches[0].screenX - touchStartX;
+  const dy = e.changedTouches[0].screenY - touchStartY;
+  
+  if (Math.abs(dx) < 30 && Math.abs(dy) < 30) {
+    const rot = rotate(current.shape);
+    if (valid(rot, current.x, current.y)) { current.shape = rot; playSound('rotate'); }
+    else if (valid(rot, current.x - 1, current.y)) { current.shape = rot; current.x--; playSound('rotate'); }
+    else if (valid(rot, current.x + 1, current.y)) { current.shape = rot; current.x++; playSound('rotate'); }
+  } 
+  else if (Math.abs(dx) > Math.abs(dy)) {
+    if (dx > 30 && valid(current.shape, current.x + 1, current.y)) { current.x++; playSound('move'); } 
+    else if (dx < -30 && valid(current.shape, current.x - 1, current.y)) { current.x--; playSound('move'); } 
+  } else {
+    if (dy > 30) {
+      while (valid(current.shape, current.x, current.y + 1)) { current.y++; score += 2; }
+      place();
+    }
+  }
+  renderScreen();
+}, {passive: false});
+
+document.addEventListener('touchmove', e => {
+  if (e.target.tagName !== 'SELECT') e.preventDefault();
+}, {passive: false});
+
+requestAnimationFrame(ts => { lastTime = ts; renderScreen(); requestAnimationFrame(loop); });
+</script>
+</body>
+</html>
